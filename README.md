@@ -121,7 +121,25 @@ git clone https://github.com/perrywey/xiaomi-rp01-root.git && cd xiaomi-rp01-roo
 
 ---
 
-### 2. 三步速通（给急性子）
+### 💡 快捷方式：交互式脚本（强烈推荐）
+
+如果你不想手动敲各个 Python 命令行参数，可以直接运行项目内置的**友好交互式脚本**（涵盖算号、开SSH、连SSH、持久化、Flash备份全流程）：
+
+- **零第三方依赖**：纯 Python 标准库支持，启动与执行均无需强制 `pip install` 依赖。
+- **自动获取 SN 与 Root 密码**：登录后台后自动调用 `/api/xqsystem/init_info` 读取设备 SN 并算出 Root 密码，完全无需翻看设备铭牌。
+- **开启 SSH 自动打印密码**：开启 SSH 成功后，自动在终端高亮显示 root 密码与一键连接命令。
+- **会话持久记忆**：IP 与 WEB 管理密码在会话中输入一次即可一直记住，无需反复输入。
+
+- **macOS / Linux 用户**：
+  ```bash
+  chmod +x run.sh && ./run.sh
+  ```
+- **Windows 用户**：
+  直接双击根目录下的 **`run.bat`**（或在 CMD / PowerShell 中运行 `run.bat`）。
+
+---
+
+### 2. 三步速通（给急性子 / 手动命令行）
 
 ```bash
 # ① 算 root 密码（把 SN 换成你自己的）
@@ -690,7 +708,25 @@ You need two things:
 
 ---
 
-### 2. Quick Start (for the impatient)
+### 💡 Interactive Menu Scripts (Recommended)
+
+If you prefer an easy, interactive console menu covering SN password calculation, SSH activation, one-click terminal login, persistence, and flash backup:
+
+- **Zero dependencies required**: Works out-of-the-box on standard Python 3 via built-in `urllib` (no `pip install` needed).
+- **Automatic SN detection**: Reads device SN and calculates the Root password automatically via `/api/xqsystem/init_info` once WEB password is provided.
+- **Root password display**: Displays the Root password and connection commands immediately upon opening SSH.
+- **Session credential caching**: Remembers the router IP and WEB admin password during the entire session without asking repeatedly.
+
+- **macOS / Linux users**:
+  ```bash
+  chmod +x run.sh && ./run.sh
+  ```
+- **Windows users**:
+  Simply double-click **`run.bat`** (or execute `run.bat` in CMD / PowerShell).
+
+---
+
+### 2. Quick Start (for the impatient / CLI)
 
 ```bash
 # 1. Calculate the root password (use your own SN)

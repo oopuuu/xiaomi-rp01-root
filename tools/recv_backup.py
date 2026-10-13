@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 小米 RP01 flash 备份接收端 —— 在【Mac】上跑。
 
@@ -14,10 +15,27 @@
   base64 /tmp/m.bin > /tmp/m.b64
   wget -q --post-file=/tmp/m.b64 -O /dev/null http://<MacIP>:8001/mtd21.b64
 """
+from __future__ import print_function
+
 import base64
-import http.server
 import os
 import sys
+
+try:
+    import http.server as http_server
+    try:
+        ThreadingHTTPServer = http_server.ThreadingHTTPServer
+    except AttributeError:
+        import socketserver
+        class ThreadingHTTPServer(socketserver.ThreadingMixIn, http_server.HTTPServer):
+            daemon_threads = True
+    BaseHTTPRequestHandler = http_server.BaseHTTPRequestHandler
+except ImportError:
+    import BaseHTTPServer as http_server
+    import SocketServer as socketserver
+    class ThreadingHTTPServer(socketserver.ThreadingMixIn, http_server.HTTPServer):
+        daemon_threads = True
+    BaseHTTPRequestHandler = http_server.BaseHTTPRequestHandler
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "./rp01_backup"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
@@ -31,7 +49,7 @@ EXPECT = {
 }
 
 
-class Handler(http.server.BaseHTTPRequestHandler):
+class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def _safe(self, name):
@@ -54,7 +72,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 data = base64.b64decode(data)
             except Exception as e:
-                print(f"[!] {fn} base64 解码失败: {e}", flush=True)
+                print("[!] {0} base64 解码失败: {1}".format(fn, e))
+                sys.stdout.flush()
                 self._reply(b"bad")
                 return
             fn = fn[:-4] + ".bin"
@@ -73,9 +92,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     mark = "OK"
                 else:
                     mark = "NG"
-                    note = f"  <-- 应为 {EXPECT[idx]:,}"
+                    note = "  <-- 应为 {0:,}".format(EXPECT[idx])
 
-        print(f"[{mark}] {path}  {len(data):,} bytes{note}", flush=True)
+        print("[{0}] {1}  {2:,} bytes{3}".format(mark, path, len(data), note))
+        sys.stdout.flush()
         self._reply(b"ok")
 
     def _reply(self, body):
@@ -91,7 +111,70 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-os.makedirs(OUT, exist_ok=True)
-print(f"[*] 接收目录: {os.path.abspath(OUT)}")
-print(f"[*] 监听 0.0.0.0:{PORT}  —— 等路由器 wget 过来（[OK]=大小正确 [NG]=残缺）")
-http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+def make_handler(out_dir):
+    class CustomHandler(Handler):
+        def do_POST(self):
+            total = int(self.headers.get("Content-Length") or 0)
+            buf = bytearray()
+            while len(buf) < total:
+                chunk = self.rfile.read(min(65536, total - len(buf)))
+                if not chunk:
+                    break
+                buf += chunk
+
+            fn = self._safe(os.path.basename(self.path.strip("/")))
+            data = bytes(buf)
+
+            if fn.endswith(".b64"):
+                try:
+                    data = base64.b64decode(data)
+                except Exception as e:
+                    print("[!] {0} base64 解码失败: {1}".format(fn, e))
+                    sys.stdout.flush()
+                    self._reply(b"bad")
+                    return
+                fn = fn[:-4] + ".bin"
+
+            path = os.path.join(out_dir, fn)
+            with open(path, "wb") as f:
+                f.write(data)
+
+            # 大小校验
+            mark, note = " ", ""
+            num = "".join(c for c in fn if c.isdigit())
+            if num and fn.startswith("mtd"):
+                idx = int(num)
+                if idx in EXPECT:
+                    if len(data) == EXPECT[idx]:
+                        mark = "OK"
+                    else:
+                        mark = "NG"
+                        note = "  <-- 应为 {0:,}".format(EXPECT[idx])
+
+            print("[{0}] {1}  {2:,} bytes{3}".format(mark, path, len(data), note))
+            sys.stdout.flush()
+            self._reply(b"ok")
+    return CustomHandler
+
+
+def run_server(out_dir=OUT, port=PORT):
+    if not os.path.exists(out_dir):
+        try:
+            os.makedirs(out_dir)
+        except OSError:
+            pass
+    print("[*] 接收目录: {0}".format(os.path.abspath(out_dir)))
+    print("[*] 监听 0.0.0.0:{0}  —— 等路由器 wget 过来（[OK]=大小正确 [NG]=残缺）".format(port))
+    print("[*] 按 Ctrl+C 可停止监听并返回菜单\n")
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(out_dir))
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[*] 接收服务已停止。")
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    run_server(OUT, PORT)
+

@@ -22,6 +22,8 @@ SN 可以直接推导出设备的 root 密码，因此不要把 SN 或算出的�
     python3 calc_root_pwd.py --selftest
 """
 
+from __future__ import print_function
+
 import sys
 import hashlib
 
@@ -31,9 +33,18 @@ SALT_RAW = "d44fb0960aa0-a5e6-4a30-250f-6d2df50a"
 SALT = "-".join(reversed(SALT_RAW.split("-")))   # 6d2df50a-250f-4a30-a5e6-d44fb0960aa0
 
 
-def root_pwd(sn: str) -> str:
+def root_pwd(sn):
     """由设备序列号 SN 计算 root 密码(8位)。SN 中的 '/' 必须保留。"""
-    return hashlib.md5((sn + SALT).encode()).hexdigest()[:8]
+    if sys.version_info[0] < 3:
+        if isinstance(sn, unicode):
+            sn = sn.encode("utf-8")
+        raw = str(sn) + SALT
+    else:
+        if isinstance(sn, str):
+            raw = (sn + SALT).encode("utf-8")
+        else:
+            raw = sn + SALT.encode("utf-8")
+    return hashlib.md5(raw).hexdigest()[:8]
 
 
 # ---- 自测样本: 左侧为 SN, 右侧为在 qemu 中真实执行
@@ -56,19 +67,19 @@ SELFTEST = {
 }
 
 
-def selftest() -> int:
+def selftest():
     ok = 0
     for sn, expect in SELFTEST.items():
         got = root_pwd(sn)
         flag = "OK " if got == expect else "FAIL"
         if got == expect:
             ok += 1
-        print(f"  [{flag}] SN={sn!r:22} 期望={expect}  实得={got}")
-    print(f"\n  自测结果: {ok}/{len(SELFTEST)}")
+        print("  [{0}] SN={1!r:22} 期望={2}  实得={3}".format(flag, sn, expect, got))
+    print("\n  自测结果: {0}/{1}".format(ok, len(SELFTEST)))
     return 0 if ok == len(SELFTEST) else 1
 
 
-def main() -> int:
+def main():
     args = sys.argv[1:]
     if not args:
         print(__doc__)
@@ -80,15 +91,15 @@ def main() -> int:
 
     sn = args[0].strip()
     if "/" not in sn:
-        print(f"[!] 警告: SN '{sn}' 不含 '/', 请确认是否为完整序列号。")
+        print("[!] 警告: SN '{0}' 不含 '/', 请确认是否为完整序列号。".format(sn))
         print("    小米路由器的 SN 形如 12345/A1B2C3D4E5F6。\n")
     pwd = root_pwd(sn)
-    print(f"SN      : {sn}")
-    print(f"用户名  : root")
-    print(f"密码    : {pwd}")
-    print(f"\n登录:  ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa \\")
-    print(f"           -o StrictHostKeyChecking=no root@192.168.31.1")
-    print(f"       然后 root / {pwd}")
+    print("SN      : {0}".format(sn))
+    print("用户名  : root")
+    print("密码    : {0}".format(pwd))
+    print("\n登录:  ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa \\")
+    print("           -o StrictHostKeyChecking=no root@192.168.31.1")
+    print("       然后 root / {0}".format(pwd))
     return 0
 
 
