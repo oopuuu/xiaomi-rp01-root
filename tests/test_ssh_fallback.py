@@ -78,6 +78,48 @@ class SSHFallbackTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fallback.enable_ssh(self.router, [], "192.168.31.2", Mock())
 
+    def test_persistence_uses_known_global_enable(self):
+        run.ctx.exploit_method = "global_enable"
+        with patch.object(run, "persist_global", return_value=True) as mock_global, \
+                patch.object(run, "detect_local_ip", return_value="192.168.31.2"):
+            outcome = run.apply_persistence_auto(self.router)
+        self.assertTrue(outcome)
+        mock_global.assert_called_once()
+        self.router.inject.assert_not_called()
+
+    def test_persistence_uses_known_macfilter(self):
+        run.ctx.exploit_method = "macfilter"
+        self.router.inject.return_value = '{"code":0}'
+        with patch.object(run, "test_port", return_value=True):
+            outcome = run.apply_persistence_auto(self.router)
+        self.assertTrue(outcome)
+        self.router.inject.assert_called_once()
+
+    def test_persistence_falls_back_to_global_enable(self):
+        run.ctx.exploit_method = None
+        self.router.inject.side_effect = RuntimeError("timeout")
+        with patch.object(run, "test_port", return_value=False), \
+                patch.object(run.time, "sleep"), \
+                patch.object(run, "detect_local_ip", return_value="192.168.31.2"), \
+                patch.object(run, "persist_global", return_value=True) as mock_global:
+            outcome = run.apply_persistence_auto(self.router)
+        self.assertTrue(outcome)
+        self.router.inject.assert_called_once()
+        mock_global.assert_called_once()
+        self.assertEqual(run.ctx.exploit_method, "global_enable")
+
+    def test_apply_persistence_server_and_cleanup(self):
+        server, thread, fetched = Mock(), Mock(), Mock()
+        server.server_address = ("192.168.31.2", 8123)
+        fetched.is_set.return_value = True
+        self.router.post.return_value.text = '{"code":0}'
+        with patch.object(fallback, "start_server", return_value=(server, thread, fetched)):
+            self.assertTrue(fallback.apply_persistence(
+                self.router, "echo persist", "192.168.31.2", wait=0.1))
+        server.shutdown.assert_called_once()
+        server.server_close.assert_called_once()
+        thread.join.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
